@@ -1,0 +1,45 @@
+name: Build OpenWrt IPK
+
+# Запускать сборку при каждом push в ветку main или вручную (workflow_dispatch)
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: luci-app-mysub
+
+      - name: Setup OpenWrt SDK
+        run: |
+          echo "Downloading OpenWrt SDK..."
+          # Скачиваем стабильный SDK (версия сборщика не влияет на пакеты PKGARCH:=all)
+          wget -q https://downloads.openwrt.org/releases/23.05.4/targets/x86/64/openwrt-sdk-23.05.4-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz -O sdk.tar.xz
+          tar xf sdk.tar.xz
+          mv openwrt-sdk-* sdk
+          
+          echo "Moving package to SDK build directory..."
+          mv luci-app-mysub sdk/package/
+
+      - name: Compile Package
+        run: |
+          cd sdk
+          # Генерируем стандартный конфиг для сборщика
+          make defconfig
+          # Собираем только наш пакет (V=s включает подробный лог, чтобы видеть ошибки, если они будут)
+          make package/luci-app-mysub/compile V=s
+
+      - name: Upload Artifact (IPK File)
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-mysub-ipk
+          # Ищем собранный файл .ipk и сохраняем его в релизы GitHub Actions
+          path: sdk/bin/packages/*/base/luci-app-mysub_*.ipk
