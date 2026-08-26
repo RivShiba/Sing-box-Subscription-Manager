@@ -37,11 +37,7 @@ define Package/luci-app-mysub/install
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/mysub.lua $(1)/usr/lib/lua/luci/model/cbi/mysub.lua
 
 	$(INSTALL_DIR) $(1)/usr/libexec
-	# Используем INSTALL_BIN, чтобы скрипт автоматически получил права на выполнение (chmod +x)
 	$(INSTALL_BIN) ./files/usr/libexec/mysub-update.sh $(1)/usr/libexec/mysub-update.sh
-
-	$(INSTALL_DIR) $(1)/etc/momo/profiles
-	$(INSTALL_DATA) ./files/etc/momo/profiles/template.json $(1)/etc/momo/profiles/template.json
 endef
 
 $(eval $(call BuildPackage,luci-app-mysub))
