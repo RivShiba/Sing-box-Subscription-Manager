@@ -1,0 +1,13 @@
+{
+  "luci-app-mysub": {
+    "description": "Grant UCI access for mysub",
+    "read": {
+      "uci": [ "mysub" ],
+      "file": [ "/var/log/mysub.log", "/etc/momo/profiles/*" ]
+    },
+    "write": {
+      "uci": [ "mysub" ],
+      "file": [ "/var/log/mysub.log", "/tmp/mysub_links.txt", "/tmp/mysub_outbounds.json", "/tmp/momo_config.json" ]
+    }
+  }
+}
