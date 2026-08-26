@@ -46,8 +46,9 @@ jobs:
         run: |
           wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/sha256sums -O sha256sums
           SDK_FILE=$(grep 'openwrt-sdk' sha256sums | awk '{print $2}' | sed 's/*//')
-          wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/$SDK_FILE
-          tar xf $SDK_FILE
+          # Добавили -O sdk_archive.tar.xz чтобы избежать конфликта имен со звездочкой
+          wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/$SDK_FILE -O sdk_archive.tar.xz
+          tar xf sdk_archive.tar.xz
           mv openwrt-sdk-* sdk
           mv luci-app-mysub sdk/package/
 
