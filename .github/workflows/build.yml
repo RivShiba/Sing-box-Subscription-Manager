@@ -62,4 +62,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-apk
-          path: sdk/bin/packages/*/base/luci-app-mysub_*.apk
+          path: sdk/bin/packages/**/luci-app-mysub_*
