@@ -1,6 +1,5 @@
-name: Build OpenWrt IPK
+name: Build OpenWrt Packages
 
-# Запускать сборку при каждом push в ветку main или вручную (workflow_dispatch)
 on:
   push:
     branches:
@@ -8,38 +7,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Compile Package
+  build_ipk:
+    name: Compile IPK (OpenWrt 23.05)
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           path: luci-app-mysub
 
-      - name: Setup OpenWrt SDK
+      - name: Setup OpenWrt 23.05 SDK
         run: |
-          echo "Downloading OpenWrt SDK..."
-          # Скачиваем стабильный SDK (версия сборщика не влияет на пакеты PKGARCH:=all)
           wget -q https://downloads.openwrt.org/releases/23.05.4/targets/x86/64/openwrt-sdk-23.05.4-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz -O sdk.tar.xz
           tar xf sdk.tar.xz
           mv openwrt-sdk-* sdk
-          
-          echo "Moving package to SDK build directory..."
           mv luci-app-mysub sdk/package/
 
-      - name: Compile Package
+      - name: Compile IPK
         run: |
           cd sdk
-          # Генерируем стандартный конфиг для сборщика
           make defconfig
-          # Собираем только наш пакет (V=s включает подробный лог, чтобы видеть ошибки, если они будут)
           make package/luci-app-mysub/compile V=s
 
-      - name: Upload Artifact (IPK File)
+      - name: Upload IPK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-ipk
-          # Ищем собранный файл .ipk и сохраняем его в релизы GitHub Actions
           path: sdk/bin/packages/*/base/luci-app-mysub_*.ipk
+
+  build_apk:
+    name: Compile APK (OpenWrt 25.12.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: luci-app-mysub
+
+      - name: Setup OpenWrt 25.12.4 SDK
+        run: |
+          wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/sha256sums -O sha256sums
+          SDK_FILE=$(grep 'openwrt-sdk' sha256sums | awk '{print $2}' | sed 's/*//')
+          wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/$SDK_FILE
+          tar xf $SDK_FILE
+          mv openwrt-sdk-* sdk
+          mv luci-app-mysub sdk/package/
+
+      - name: Compile APK
+        run: |
+          cd sdk
+          make defconfig
+          make package/luci-app-mysub/compile V=s
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-mysub-apk
+          path: sdk/bin/packages/*/base/luci-app-mysub_*.apk
