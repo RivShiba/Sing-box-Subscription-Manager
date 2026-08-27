@@ -25,6 +25,9 @@ jobs:
       - name: Compile IPK
         run: |
           cd sdk
+          # Обновляем каталоги пакетов, чтобы SDK нашел jq и curl
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -32,7 +35,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-ipk
-          path: sdk/bin/packages/*/base/luci-app-mysub_*.ipk
+          path: sdk/bin/packages/**/luci-app-mysub_*
 
   build_apk:
     name: Compile APK (OpenWrt 25.12.4)
@@ -46,7 +49,6 @@ jobs:
         run: |
           wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/sha256sums -O sha256sums
           SDK_FILE=$(grep 'openwrt-sdk' sha256sums | awk '{print $2}' | sed 's/*//')
-          # Добавили -O sdk_archive.tar.xz чтобы избежать конфликта имен со звездочкой
           wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/$SDK_FILE -O sdk_archive.tar.xz
           tar xf sdk_archive.tar.xz
           mv openwrt-sdk-* sdk
@@ -55,6 +57,9 @@ jobs:
       - name: Compile APK
         run: |
           cd sdk
+          # Обновляем каталоги пакетов, чтобы SDK нашел jq и curl
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
