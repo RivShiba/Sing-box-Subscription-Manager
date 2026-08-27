@@ -25,9 +25,8 @@ jobs:
       - name: Compile IPK
         run: |
           cd sdk
-          # Быстрое точечное обновление только нужного репозитория
-          ./scripts/feeds update packages
-          ./scripts/feeds install jq curl coreutils-base64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -35,7 +34,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-ipk
-          # Убрали нижнее подчеркивание, теперь найдет любой вариант
           path: sdk/bin/packages/**/luci-app-mysub*
 
   build_apk:
@@ -58,9 +56,8 @@ jobs:
       - name: Compile APK
         run: |
           cd sdk
-          # Быстрое точечное обновление только нужного репозитория
-          ./scripts/feeds update packages
-          ./scripts/feeds install jq curl coreutils-base64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -68,5 +65,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-apk
-          # Убрали нижнее подчеркивание, теперь найдет любой вариант
           path: sdk/bin/packages/**/luci-app-mysub*
