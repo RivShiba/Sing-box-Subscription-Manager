@@ -3,11 +3,20 @@
     "description": "Grant UCI access for mysub",
     "read": {
       "uci": [ "mysub" ],
-      "file": [ "/var/log/mysub.log", "/etc/momo/profiles/*" ]
+      "file": [ 
+        "/var/log/mysub.log", 
+        "/etc/mysub/*" 
+      ]
     },
     "write": {
       "uci": [ "mysub" ],
-      "file": [ "/var/log/mysub.log", "/tmp/mysub_links.txt", "/tmp/mysub_outbounds.json", "/tmp/momo_config.json" ]
+      "file": [ 
+        "/var/log/mysub.log", 
+        "/tmp/mysub_links.txt", 
+        "/tmp/mysub_outbounds.json", 
+        "/tmp/momo_config.json",
+        "/etc/mysub/*"
+      ]
     }
   }
 }

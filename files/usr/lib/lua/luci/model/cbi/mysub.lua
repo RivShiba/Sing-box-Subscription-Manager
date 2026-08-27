@@ -14,10 +14,10 @@ s:tab("config", translate("Готовый конфиг / Result Config"))
 urls = s:taboption("general", DynamicList, "urls", translate("Subscription URLs"), translate("Ссылки на подписки (v2rayN, Base64)."))
 
 base = s:taboption("general", Value, "base_config", translate("Base Config File"), translate("Путь к базовому конфигу (в него добавятся прокси)."))
-base.default = "/etc/momo/profiles/template.json"
+base.default = "/etc/mysub/template.json"
 
 out = s:taboption("general", Value, "output_config", translate("Output Config File"), translate("Куда сохранить результат (Base + Подписки)."))
-out.default = "/etc/momo/profiles/mysub.json"
+out.default = "/etc/mysub/mysub.json"
 
 cron = s:taboption("general", Value, "cron", translate("Cron Interval"), translate("Стандартный формат cron, например '0 4 * * *'."))
 cron.default = "0 4 * * *"
