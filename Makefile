@@ -28,6 +28,7 @@ define Package/luci-app-mysub/install
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/mysub $(1)/etc/config/mysub
 	$(INSTALL_DIR) $(1)/etc/mysub
+	$(INSTALL_DATA) ./files/etc/mysub/template.json.example $(1)/etc/mysub/template.json.example
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/controller/mysub.lua $(1)/usr/lib/lua/luci/controller/mysub.lua
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
