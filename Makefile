@@ -24,20 +24,22 @@ define Build/Compile
 endef
 
 define Package/luci-app-mysub/install
-	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
-	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-mysub.json $(1)/usr/share/rpcd/acl.d/luci-app-mysub.json
+    $(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
+    $(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-mysub.json $(1)/usr/share/rpcd/acl.d/luci-app-mysub.json
 
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/etc/config/mysub $(1)/etc/config/mysub
+    $(INSTALL_DIR) $(1)/etc/config
+    $(INSTALL_CONF) ./files/etc/config/mysub $(1)/etc/config/mysub
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-	$(INSTALL_DATA) ./files/usr/lib/lua/luci/controller/mysub.lua $(1)/usr/lib/lua/luci/controller/mysub.lua
+    $(INSTALL_DIR) $(1)/etc/mysub
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
-	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/mysub.lua $(1)/usr/lib/lua/luci/model/cbi/mysub.lua
+    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
+    $(INSTALL_DATA) ./files/usr/lib/lua/luci/controller/mysub.lua $(1)/usr/lib/lua/luci/controller/mysub.lua
 
-	$(INSTALL_DIR) $(1)/usr/libexec
-	$(INSTALL_BIN) ./files/usr/libexec/mysub-update.sh $(1)/usr/libexec/mysub-update.sh
+    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
+    $(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/mysub.lua $(1)/usr/lib/lua/luci/model/cbi/mysub.lua
+
+    $(INSTALL_DIR) $(1)/usr/libexec
+    $(INSTALL_BIN) ./files/usr/libexec/mysub-update.sh $(1)/usr/libexec/mysub-update.sh
 endef
 
 $(eval $(call BuildPackage,luci-app-mysub))
