@@ -81,7 +81,7 @@ config_view = s:taboption("config", TextValue, "_config_view", translate("Genera
 config_view.readonly = true
 config_view.rows = 30
 config_view.cfgvalue = function(self, section)
-    local out_path = m.uci:get("mysub", "main", "output_config") or "/etc/momo/profiles/mysub.json"
+    local out_path = m.uci:get("mysub", "main", "output_config") or "/etc/mysub/mysub.json"
     return nixio.fs.readfile(out_path) or "Конфиг еще не сгенерирован или файл не найден."
 end
 

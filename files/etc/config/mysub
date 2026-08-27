@@ -1,6 +1,6 @@
 config mysub 'main'
 	option cron '0 4 * * *'
-	option base_config '/etc/mysub/baseconf.json'
+	option base_config '/etc/mysub/template.json'
 	option output_config '/etc/mysub/mysub.json'
 	option log_level 'info'
 	list urls 'https://example.com/your-subscription-link-1'

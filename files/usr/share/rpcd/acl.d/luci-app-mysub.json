@@ -14,7 +14,7 @@
         "/var/log/mysub.log", 
         "/tmp/mysub_links.txt", 
         "/tmp/mysub_outbounds.json", 
-        "/tmp/momo_config.json",
+        "/tmp/mysub_config.json",
         "/etc/mysub/*"
       ]
     }

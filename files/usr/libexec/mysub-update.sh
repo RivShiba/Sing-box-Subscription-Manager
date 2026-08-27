@@ -25,8 +25,8 @@ debug "Loaded URLs: $urls"
 base_config=$(uci -q get mysub.@mysub[0].base_config || uci -q get mysub.main.base_config)
 output_config=$(uci -q get mysub.@mysub[0].output_config || uci -q get mysub.main.output_config)
 
-[ -z "$base_config" ] && base_config="/etc/momo/profiles/template.json"
-[ -z "$output_config" ] && output_config="/etc/momo/profiles/mysub.json"
+[ -z "$base_config" ] && base_config="/etc/mysub/template.json"
+[ -z "$output_config" ] && output_config="/etc/mysub/mysub.json"
 
 log "Base config: $base_config"
 log "Output config: $output_config"
@@ -36,7 +36,7 @@ if [ ! -f "$base_config" ]; then
     exit 1
 fi
 
-# ѕроверка валидности базового JSON
+# Validate base config JSON
 if ! jq empty < "$base_config" >/dev/null 2>/tmp/jq_base_err.log; then
     log "ERROR: Base config $base_config contains invalid JSON!"
     err_msg=$(cat /tmp/jq_base_err.log | tr '\n' ' ')
@@ -393,14 +393,14 @@ if [ "$total_parsed" -gt 0 ]; then
     log "Merging with base config ($base_config) using marker method..."
     
     jq --slurpfile new_obs /tmp/mysub_outbounds.json '
-      # 1. ѕолучаем массив имен скачанных серверов
+      # 1. Collect tags of all new outbounds
       ($new_obs[0] | map(.tag)) as $new_tags |
       
-      # 2. ƒобавл€ем физические серверы в самый конец массива outbounds
+      # 2. Append new outbounds to existing outbounds array
       .outbounds = (if .outbounds then .outbounds else [] end) |
       .outbounds += $new_obs[0] |
       
-      # 3. »щем маркер {all_subs} во всех селекторах и делаем замену
+      # 3. Replace {all_subs} marker with new tags in selector/urltest groups
       .outbounds = [
         .outbounds[] |
         if has("outbounds") and (.type == "selector" or .type == "urltest") then
@@ -413,20 +413,19 @@ if [ "$total_parsed" -gt 0 ]; then
           . 
         end
       ]
-    ' "$base_config" > /tmp/momo_config.json 2> /tmp/jq_merge_err.log
+    ' "$base_config" > /tmp/mysub_config.json 2> /tmp/jq_merge_err.log
     
-    if [ $? -eq 0 ] && jq empty < /tmp/momo_config.json 2>/dev/null; then
-        mv /tmp/momo_config.json "$output_config"
+    if [ $? -eq 0 ] && jq empty < /tmp/mysub_config.json 2>/dev/null; then
+        mv /tmp/mysub_config.json "$output_config"
         log "SUCCESS: Validation passed. Output saved to $output_config"
-        /etc/init.d/momo restart
-        log "Momo service restarted."
+        log "Config updated successfully. Restart your service manually if needed."
     else
         log "ERROR: Invalid JSON generated or merge failed. Restart aborted!"
         if [ -f /tmp/jq_merge_err.log ]; then
             err_msg=$(cat /tmp/jq_merge_err.log | tr '\n' ' ')
             log "JQ ERROR DETAILS: $err_msg"
         fi
-        rm -f /tmp/momo_config.json
+        rm -f /tmp/mysub_config.json
     fi
 else
     log "No servers to add. Skipping."
