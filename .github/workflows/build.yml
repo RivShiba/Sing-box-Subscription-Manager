@@ -25,9 +25,9 @@ jobs:
       - name: Compile IPK
         run: |
           cd sdk
-          # Обновляем каталоги пакетов, чтобы SDK нашел jq и curl
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Быстрое точечное обновление только нужного репозитория
+          ./scripts/feeds update packages
+          ./scripts/feeds install jq curl coreutils-base64
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -35,7 +35,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-ipk
-          path: sdk/bin/packages/**/luci-app-mysub_*
+          # Убрали нижнее подчеркивание, теперь найдет любой вариант
+          path: sdk/bin/packages/**/luci-app-mysub*
 
   build_apk:
     name: Compile APK (OpenWrt 25.12.4)
@@ -57,9 +58,9 @@ jobs:
       - name: Compile APK
         run: |
           cd sdk
-          # Обновляем каталоги пакетов, чтобы SDK нашел jq и curl
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Быстрое точечное обновление только нужного репозитория
+          ./scripts/feeds update packages
+          ./scripts/feeds install jq curl coreutils-base64
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -67,4 +68,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-mysub-apk
-          path: sdk/bin/packages/**/luci-app-mysub_*
+          # Убрали нижнее подчеркивание, теперь найдет любой вариант
+          path: sdk/bin/packages/**/luci-app-mysub*
