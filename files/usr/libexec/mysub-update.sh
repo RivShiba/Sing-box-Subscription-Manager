@@ -92,11 +92,43 @@ decode_base64() {
 for url in $urls; do
     log "Fetching: $url"
     
-    raw_b64=$(curl -s -f --connect-timeout 5 --max-time 15 -H "User-Agent: v2rayN/6.23" "$url")
-    if [ $? -ne 0 ] || [ -z "$raw_b64" ]; then
-        log "ERROR: Download failed or empty response."
+    raw_b64=""
+    curl_err=""
+    attempt=0
+    max_retries=3
+    while [ $attempt -lt $max_retries ]; do
+        attempt=$((attempt+1))
+        curl_err=$(curl -s -f --connect-timeout 10 --max-time 30 -H "User-Agent: v2rayN/6.23" -w "\n%{http_code}" "$url" 2>&1)
+        curl_exit=$?
+        http_code=$(echo "$curl_err" | tail -1)
+        raw_b64=$(echo "$curl_err" | sed '$d')
+
+        if [ $curl_exit -eq 0 ] && [ -n "$raw_b64" ]; then
+            break
+        fi
+
+        if [ $curl_exit -eq 6 ]; then
+            log "WARN: Attempt $attempt/$max_retries: DNS resolution failed for $url"
+        elif [ $curl_exit -eq 7 ]; then
+            log "WARN: Attempt $attempt/$max_retries: Connection refused by $url"
+        elif [ $curl_exit -eq 28 ]; then
+            log "WARN: Attempt $attempt/$max_retries: Connection timed out for $url"
+        elif [ "$http_code" = "403" ]; then
+            log "WARN: Attempt $attempt/$max_retries: Access denied (403) for $url"
+        elif [ "$http_code" = "404" ]; then
+            log "WARN: Attempt $attempt/$max_retries: Not found (404) for $url"
+        else
+            log "WARN: Attempt $attempt/$max_retries: Download failed (curl exit=$curl_exit, HTTP $http_code) for $url"
+        fi
+
+        [ $attempt -lt $max_retries ] && sleep 2
+    done
+
+    if [ -z "$raw_b64" ]; then
+        log "ERROR: Failed to fetch $url after $max_retries attempts. Skipping."
         continue
     fi
+    debug "Downloaded ${#raw_b64} bytes from $url"
 
     if echo "$raw_b64" | grep -q -E "vless://|vmess://|trojan://|hysteria2://"; then
         log "Format: Plaintext detected."
@@ -206,6 +238,9 @@ for url in $urls; do
                 v_ps=$(echo "$vmess_json" | jq -r '.ps // empty')
                 v_host=$(echo "$vmess_json" | jq -r '.host // empty')
                 v_alpn=$(echo "$vmess_json" | jq -r '.alpn // empty')
+                v_ainsecure=$(echo "$vmess_json" | jq -r '.allowInsecure // empty')
+                [ -z "$v_ainsecure" ] && v_ainsecure=$(echo "$vmess_json" | jq -r '.insecure // empty')
+                [ "$v_ainsecure" = "1" ] || [ "$v_ainsecure" = "true" ] && v_insecure="true" || v_insecure="false"
                 
                 if [ -z "$v_add" ]; then
                     log "WARN: Failed to decode vmess link (empty/invalid base64 or missing 'add' field) - skipping."
@@ -223,10 +258,10 @@ for url in $urls; do
                 outbound=$(jq -n \
                      --arg tag "$v_ps" --arg server "$v_add" --arg port "$v_port" \
                      --arg uuid "$v_id" --arg net "$v_net" --arg tls "$v_tls" \
-                     --arg sni "$v_sni" --arg path "$v_path" --arg host "$v_host" --arg alpn "$v_alpn" \
+                     --arg sni "$v_sni" --arg path "$v_path" --arg host "$v_host" --arg alpn "$v_alpn" --arg insecure "$v_insecure" \
                      '{
                         type: "vmess", tag: $tag, server: $server, server_port: ($port | tonumber), uuid: $uuid, security: "auto",
-                        tls: (if $tls == "tls" then { enabled: true, server_name: (if $sni != "" then $sni else $server end), insecure: true, utls: { enabled: true, fingerprint: "chrome" } } + (if $alpn != "" then { alpn: ($alpn | split(",")) } else {} end) else null end),
+                        tls: (if $tls == "tls" then { enabled: true, server_name: (if $sni != "" then $sni else $server end), insecure: ($insecure == "true"), utls: { enabled: true, fingerprint: "chrome" } } + (if $alpn != "" then { alpn: ($alpn | split(",")) } else {} end) else null end),
                         transport: (if $net == "ws" then { type: "ws", path: (if $path != "" then $path else "/" end), headers: (if $host != "" then { Host: $host } else null end) } | with_entries(select(.value != null)) elif $net == "grpc" then { type: "grpc", service_name: $path } else null end)
                     } | with_entries(select(.value != null))')
                 ;;
