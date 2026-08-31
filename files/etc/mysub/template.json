@@ -6,7 +6,7 @@
   "dns": {
     "servers": [
       {
-        "tag": "google",
+        "tag": "remote",
         "address": "tls://8.8.8.8"
       },
       {
@@ -81,6 +81,6 @@
         "outbound": "direct"
       }
     ],
-    "final": "proxy"
+    "final": "direct"
   }
 }
