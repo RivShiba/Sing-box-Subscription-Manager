@@ -11,7 +11,7 @@ define Package/luci-app-mysub
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Advanced Subscription Parser for Momo
-  DEPENDS:=+jq +curl +coreutils-base64
+  DEPENDS:=+luci-compat +jq +curl +coreutils-base64
   PKGARCH:=all
 endef
 
