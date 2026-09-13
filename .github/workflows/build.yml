@@ -17,18 +17,29 @@ jobs:
         with:
           path: luci-app-mysub
 
-      - name: Setup OpenWrt 23.05 SDK
+      - name: Cache OpenWrt 23.05 SDK
+        id: cache_ipk
+        uses: actions/cache@v4
+        with:
+          path: sdk
+          key: openwrt-sdk-23.05.4
+
+      - name: Download & extract SDK
+        if: steps.cache_ipk.outputs.cache-hit != 'true'
         run: |
           wget -q https://downloads.openwrt.org/releases/23.05.4/targets/x86/64/openwrt-sdk-23.05.4-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz -O sdk.tar.xz
           tar xf sdk.tar.xz
           mv openwrt-sdk-* sdk
-          mv luci-app-mysub sdk/package/
+          mkdir -p sdk/package/luci-app-mysub
+
+      - name: Copy package into SDK
+        run: |
+          rm -rf sdk/package/luci-app-mysub
+          cp -r luci-app-mysub sdk/package/
 
       - name: Compile IPK
         run: |
           cd sdk
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
@@ -46,20 +57,31 @@ jobs:
         with:
           path: luci-app-mysub
 
-      - name: Setup OpenWrt 25.12.4 SDK
+      - name: Cache OpenWrt 25.12.4 SDK
+        id: cache_apk
+        uses: actions/cache@v4
+        with:
+          path: sdk
+          key: openwrt-sdk-25.12.4
+
+      - name: Download & extract SDK
+        if: steps.cache_apk.outputs.cache-hit != 'true'
         run: |
           wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/sha256sums -O sha256sums
           SDK_FILE=$(grep 'openwrt-sdk' sha256sums | awk '{print $2}' | sed 's/*//')
           wget -q https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/$SDK_FILE -O sdk_archive.tar.xz
           tar xf sdk_archive.tar.xz
           mv openwrt-sdk-* sdk
-          mv luci-app-mysub sdk/package/
+          mkdir -p sdk/package/luci-app-mysub
+
+      - name: Copy package into SDK
+        run: |
+          rm -rf sdk/package/luci-app-mysub
+          cp -r luci-app-mysub sdk/package/
 
       - name: Compile APK
         run: |
           cd sdk
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
           make defconfig
           make package/luci-app-mysub/compile V=s
 
