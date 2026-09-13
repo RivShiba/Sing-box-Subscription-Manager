@@ -1,5 +1,20 @@
 local m, s, urls, base, out, cron, log_level, btn, log, config_view
 
+-- Возвращает установленную версию пакета от пакетного менеджера (apk/opkg).
+-- "" если не определяется.
+local function installed_version()
+    local out, ver = "", ""
+    if nixio.fs.access("/usr/bin/apk") then
+        local h = io.popen("apk list --installed 2>/dev/null | grep '^luci-app-mysub-'")
+        if h then out = h:read("*a") or ""; h:close() end
+    else
+        local h = io.popen("opkg status luci-app-mysub 2>/dev/null | grep '^Version:'")
+        if h then out = h:read("*a") or ""; h:close() end
+    end
+    ver = out:match("([%d%.]+%-?r?%d*)") or ""
+    return ver:match("^%s*$") and "" or ver
+end
+
 m = Map("mysub", translate("Sing-box Subscription Manager"), translate("Управление VLESS/VMess/Trojan/Hysteria2 подписками."))
 
 -- ИСПОЛЬЗУЕМ NamedSection, так как конфиг имеет вид: config mysub 'main'
@@ -11,6 +26,11 @@ s:tab("logs", translate("Логи / Logs"))
 s:tab("config", translate("Готовый конфиг / Result Config"))
 
 -- ================= Вкладка General =================
+local ver = s:taboption("general", Value, "_version", translate("Installed Version"), translate("Текущая установленная версия пакета."))
+ver.default = installed_version()
+ver.rmempty = true
+ver.readonly = true
+
 urls = s:taboption("general", DynamicList, "urls", translate("Subscription URLs"), translate("Ссылки на подписки (v2rayN, Base64)."))
 
 base = s:taboption("general", Value, "base_config", translate("Base Config File"), translate("Путь к базовому конфигу (в него добавятся прокси)."))
