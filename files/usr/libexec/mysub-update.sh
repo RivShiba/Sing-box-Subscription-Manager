@@ -98,8 +98,15 @@ for url in $urls; do
     max_retries=3
     while [ $attempt -lt $max_retries ]; do
         attempt=$((attempt+1))
+        # Strict TLS verification first; fall back to --insecure only if the
+        # server's certificate fails to verify (curl exit 60).
         curl_err=$(curl -s -f --connect-timeout 10 --max-time 30 -H "User-Agent: v2rayN/6.23" -w "\n%{http_code}" "$url" 2>&1)
         curl_exit=$?
+        if [ $curl_exit -eq 60 ]; then
+            debug "TLS certificate error (exit 60), retrying with --insecure"
+            curl_err=$(curl -s -f -k --connect-timeout 10 --max-time 30 -H "User-Agent: v2rayN/6.23" -w "\n%{http_code}" "$url" 2>&1)
+            curl_exit=$?
+        fi
         http_code=$(echo "$curl_err" | tail -1)
         raw_b64=$(echo "$curl_err" | sed '$d')
 
