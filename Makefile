@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-mysub
-PKG_VERSION:=1.0.0
+PKG_VERSION:=1.0.1
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -10,7 +10,7 @@ define Package/luci-app-mysub
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=Advanced Subscription Parser for Momo
+  TITLE:=Advanced Sing-box Subscription Parser
   DEPENDS:=+luci-compat +jq +curl +coreutils-base64
   PKGARCH:=all
 endef
