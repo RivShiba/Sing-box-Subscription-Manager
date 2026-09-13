@@ -48,6 +48,7 @@ jobs:
         with:
           name: luci-app-mysub-ipk
           path: sdk/bin/packages/**/luci-app-mysub*
+          if-no-files-found: error
 
   build_apk:
     name: Compile APK (OpenWrt 25.12.4)
@@ -90,6 +91,7 @@ jobs:
         with:
           name: luci-app-mysub-apk
           path: sdk/bin/packages/**/luci-app-mysub*
+          if-no-files-found: error
 
   publish:
     name: Publish to GitHub Release
@@ -108,12 +110,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-                  # Удаляем предыдущий релиз с этим тегом (если есть), чтобы
-                  # повторный запуск не падал с "already exists".
-                  gh release delete "$TAG" --yes --repo "${{ github.repository }}" || true
-                  gh release create "$TAG" \
-                    dist/luci-app-mysub-ipk/* \
-                    dist/luci-app-mysub-apk/* \
-                    --repo "${{ github.repository }}" \
-                    --title "luci-app-mysub $TAG" \
-                    --generate-notes
+          # Удаляем предыдущий релиз с этим тегом (если есть), чтобы
+          # повторный запуск не падал с "already exists".
+          gh release delete "$TAG" --yes --repo "${{ github.repository }}" || true
+          # Передаём только файлы (не директории x86_64) — ищем их через find.
+          gh release create "$TAG" \
+            $(find dist -type f -name 'luci-app-mysub*') \
+            --repo "${{ github.repository }}" \
+            --title "luci-app-mysub $TAG" \
+            --generate-notes
