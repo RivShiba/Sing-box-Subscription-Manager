@@ -4,6 +4,7 @@
 
 CONFIG_FILE="/etc/config/mysub"
 LOG_FILE="/var/log/mysub.log"
+XRAY_CONV="/usr/libexec/mysub-xray2sing.jq"
 
 > "$LOG_FILE"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE"; }
@@ -50,6 +51,7 @@ if [ -z "$urls" ]; then
 fi
 
 echo "[" > /tmp/mysub_outbounds.json
+echo "[]" > /tmp/mysub_subst.json
 total_parsed=0
 total_skipped=0
 
@@ -136,6 +138,33 @@ for url in $urls; do
         continue
     fi
     debug "Downloaded ${#raw_b64} bytes from $url"
+
+    # --- Xray JSON config array (e.g. maestro52-style subscriptions) ---
+    if printf '%s' "$raw_b64" | jq -e 'type=="array" and (length>0) and (.[0]|type=="object") and (.[0]|has("outbounds"))' >/dev/null 2>&1; then
+        log "Format: Xray JSON config array detected."
+        if [ ! -f "$XRAY_CONV" ]; then
+            log "ERROR: Converter $XRAY_CONV not found - cannot parse Xray JSON."
+            continue
+        fi
+        if printf '%s' "$raw_b64" | jq -f "$XRAY_CONV" > /tmp/mysub_xray_conv.json 2>/tmp/mysub_xray_conv.err; then
+            jq -c '.outbounds[]' /tmp/mysub_xray_conv.json > /tmp/mysub_xray_obs.txt
+            while IFS= read -r ob; do
+                [ -n "$ob" ] || continue
+                [ "$total_parsed" -gt 0 ] && echo "," >> /tmp/mysub_outbounds.json
+                echo "$ob" >> /tmp/mysub_outbounds.json
+                total_parsed=$((total_parsed+1))
+            done < /tmp/mysub_xray_obs.txt
+            jq --slurpfile g /tmp/mysub_xray_conv.json '. + $g[0].group_tags' /tmp/mysub_subst.json > /tmp/mysub_subst.tmp && mv /tmp/mysub_subst.tmp /tmp/mysub_subst.json
+            xcount=$(jq '.outbounds | length' /tmp/mysub_xray_conv.json)
+            log "Xray JSON: generated $xcount outbounds (grouped by country), country groups added to selector set."
+            rm -f /tmp/mysub_xray_conv.json /tmp/mysub_xray_conv.err /tmp/mysub_xray_obs.txt
+        else
+            log "ERROR: Xray JSON conversion failed:"
+            sed 's/^/    /' /tmp/mysub_xray_conv.err | while IFS= read -r el; do log "$el"; done
+            rm -f /tmp/mysub_xray_conv.json /tmp/mysub_xray_conv.err
+        fi
+        continue
+    fi
 
     if echo "$raw_b64" | grep -q -E "vless://|vmess://|trojan://|hysteria2://"; then
         log "Format: Plaintext detected."
@@ -414,6 +443,8 @@ for url in $urls; do
             debug "Successfully generated outbound JSON for this link."
             [ "$total_parsed" -gt 0 ] && echo "," >> /tmp/mysub_outbounds.json
             echo "$outbound" >> /tmp/mysub_outbounds.json
+            _t=$(echo "$outbound" | jq -r '.tag // empty')
+            jq --arg t "$_t" '. + [$t]' /tmp/mysub_subst.json > /tmp/mysub_subst.tmp && mv /tmp/mysub_subst.tmp /tmp/mysub_subst.json
             count=$((count+1))
             total_parsed=$((total_parsed+1))
         else
@@ -434,9 +465,9 @@ log "Total servers parsed: $total_parsed. Total skipped: $total_skipped."
 if [ "$total_parsed" -gt 0 ]; then
     log "Merging with base config ($base_config) using marker method..."
     
-    jq --slurpfile new_obs /tmp/mysub_outbounds.json '
-      # 1. Collect tags of all new outbounds
-      ($new_obs[0] | map(.tag)) as $new_tags |
+    jq --slurpfile new_obs /tmp/mysub_outbounds.json --slurpfile subst /tmp/mysub_subst.json '
+      # 1. Tags for {all_subs} replacement (link nodes + Xray country groups)
+      ($subst[0]) as $new_tags |
       
       # 2. Append new outbounds to existing outbounds array
       .outbounds = (if .outbounds then .outbounds else [] end) |

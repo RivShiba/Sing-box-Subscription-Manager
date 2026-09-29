@@ -35,6 +35,7 @@ define Package/luci-app-mysub/install
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/mysub.lua $(1)/usr/lib/lua/luci/model/cbi/mysub.lua
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) ./files/usr/libexec/mysub-update.sh $(1)/usr/libexec/mysub-update.sh
+	$(INSTALL_DATA) ./files/usr/libexec/mysub-xray2sing.jq $(1)/usr/libexec/mysub-xray2sing.jq
 endef
 
 define Package/luci-app-mysub/conffiles
