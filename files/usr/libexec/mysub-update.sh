@@ -385,7 +385,11 @@ run_analysis() {
         }' "$ANALYZE_DIR/results.tsv" | sort -n > "$ANALYZE_DIR/rejected.tsv"
     _rejected=$(wc -l < "$ANALYZE_DIR/rejected.tsv" | tr -d ' ')
 
+    # Версия шаблона: защищает свежий результат анализа от перезаписи
+    # устаревшей открытой страницей LuCI (см. tpl.write в cbi-модели).
+    _rev=$(date +%s)
     uci -q delete mysub.main.server_template
+    uci -q add_list mysub.main.server_template="# rev ${_rev} (сгенерирован $(date '+%d.%m.%Y %H:%M:%S')) — строки с # в конфиг не попадают"
     while IFS="$TAB" read -r _d _key _tag; do
         uci -q add_list mysub.main.server_template="${_key}  # ${_tag} (${_d}ms)"
     done < "$ANALYZE_DIR/sorted.tsv"
@@ -396,6 +400,7 @@ run_analysis() {
             uci -q add_list mysub.main.server_template="# ${_key}  # ${_tag} — отсеян: ${_why}"
         done < "$ANALYZE_DIR/rejected.tsv"
     fi
+    uci -q set mysub.main.template_rev="$_rev"
     uci -q commit mysub
 
     _dur=$(( $(date +%s) - _t0 ))

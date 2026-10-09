@@ -106,10 +106,24 @@ tpl.cfgvalue = function(self, section)
     return table.concat(v, "\n")
 end
 tpl.write = function(self, section, value)
+    local text = tostring(value or "")
+
+    -- Защита от устаревшей страницы. Кнопки в LuCI сохраняют всю форму, поэтому
+    -- открытая вчера вкладка перезаписала бы свежий результат анализа старым
+    -- текстом. Шаблон, созданный анализом, помечен строкой "# rev <unixtime>";
+    -- если она старее той, что записана в UCI, — не сохраняем и говорим почему.
+    local own_rev = tonumber(text:match("^#%s*rev%s*(%d+)"))
+    local cur_rev = tonumber(m.uci:get("mysub", section, "template_rev")) or 0
+    if own_rev and own_rev < cur_rev then
+        self:add_error(section, "invalid", translate(
+            "Шаблон НЕ сохранён: страница устарела (шаблон был перегенерирован анализом позже). Обновите страницу (F5)."))
+        return
+    end
+
     -- UCI не умеет хранить многострочный option, поэтому держим список (list).
     -- В luci.model.uci доступен только set_list (метода add_list нет).
     local vals = {}
-    for line in tostring(value or ""):gmatch("[^\r\n]+") do
+    for line in text:gmatch("[^\r\n]+") do
         local s_line = line:gsub("^%s+", ""):gsub("%s+$", "")
         if s_line ~= "" then
             vals[#vals + 1] = s_line
