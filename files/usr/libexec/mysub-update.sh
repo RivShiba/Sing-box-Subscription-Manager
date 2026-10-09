@@ -5,6 +5,26 @@
 CONFIG_FILE="/etc/config/mysub"
 LOG_FILE="/var/log/mysub.log"
 XRAY_CONV="/usr/libexec/mysub-xray2sing.jq"
+LOCK_DIR="/tmp/mysub.lock"
+
+# --- Блокировка: два парсера одновременно нельзя ---
+# Они используют общие временные файлы (/tmp/mysub_outbounds.json и др.) и
+# пишут в один лог, поэтому параллельный запуск (кнопка + cron, кнопка +
+# анализ) ломает обновление. mkdir атомарен, flock в busybox нет.
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    _lock_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+    if [ -n "$_lock_pid" ] && kill -0 "$_lock_pid" 2>/dev/null; then
+        # Лог не перезаписываем — там работает другой экземпляр.
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] Парсер уже выполняется (pid $_lock_pid) — этот запуск пропущен." >> "$LOG_FILE"
+        logger -t mysub "already running (pid $_lock_pid), skipped duplicate start"
+        exit 0
+    fi
+    # Замок остался от убитого процесса — снимаем и занимаем.
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" 2>/dev/null || exit 1
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' 0 1 2 15
 
 # Режим анализа подписок (--analyze): только замер/сортировка/шаблон,
 # основной конфиг и запущенный сервис при этом не затрагиваются.
