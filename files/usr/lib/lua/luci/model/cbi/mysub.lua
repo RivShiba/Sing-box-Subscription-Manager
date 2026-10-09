@@ -75,6 +75,30 @@ local excl = s:taboption("analysis", DynamicList, "exclude_keywords",
     translate("Слова-исключения"),
     translate("Сервер, в названии (теге) которого встречается любое из этих слов, не попадёт в шаблон. Регистр учитывается только для русских слов (ограничение BusyBox), для латиницы — не учитывается."))
 
+-- Недельный автоанализ: держит шаблон свежим. Без него при смене адресов
+-- узлов у провайдера шаблон перестаёт совпадать с подпиской, и обновление
+-- начинает отменяться защитой (конфиг остаётся рабочим, но не свежим).
+local an_cron = s:taboption("analysis", Flag, "analysis_cron_enabled",
+    translate("Автоматический анализ по расписанию (воскресенье)"),
+    translate("Раз в неделю, по воскресеньям, в указанное ниже время запускать анализ подписок: парсер скачает подписки, замерит задержки и обновит «Шаблон серверов». Нужно, чтобы шаблон не устаревал. Сам анализ конфиг не меняет — серверы подтянутся при следующем обычном обновлении по cron. Выключение галочки полностью убирает задание."))
+an_cron.default = "0"
+an_cron.enabled = "1"
+an_cron.disabled = "0"
+
+local an_time = s:taboption("analysis", Value, "analysis_cron_time",
+    translate("Время недельного анализа (ЧЧ:ММ)"),
+    translate("Время запуска автоанализа в 24-часовом формате, например 03:30. Ставьте его раньше обычного обновления (по умолчанию 4:00) — тогда свежий шаблон успеет примениться в тот же день. При неверном формате подставляется 03:30."))
+an_time.default = "03:30"
+an_time.rmempty = true
+an_time.write = function(self, section, value)
+    local hh, mm = tostring(value or ""):match("^%s*(%d%d?):(%d%d)%s*$")
+    if hh and tonumber(hh) <= 23 and tonumber(mm) <= 59 then
+        m.uci:set("mysub", section, "analysis_cron_time", string.format("%02d:%02d", tonumber(hh), tonumber(mm)))
+    else
+        m.uci:set("mysub", section, "analysis_cron_time", "03:30")
+    end
+end
+
 local st = s:taboption("analysis", TextValue, "analysis_status",
     translate("Результат последнего анализа"),
     translate("Время завершения, длительность и итог последнего анализа. Заполняется кнопкой ниже; чтобы увидеть свежий результат, обновите страницу (F5)."))
@@ -187,15 +211,32 @@ config_view.cfgvalue = function(self, section)
     return nixio.fs.readfile(out_path) or "Конфиг еще не сгенерирован или файл не найден."
 end
 
--- Хук для обновления crontab при сохранении настроек
+-- Хук для обновления crontab при сохранении настроек.
+-- Обе строки (обычное обновление и недельный анализ) собираются с нуля:
+-- sed сносит всё, где есть «mysub-update», поэтому дублей не возникает,
+-- а выключенная галочка автоанализа действительно убирает задание.
 function m.on_after_commit(self)
+    local lines = {}
+
     local c = m.uci:get("mysub", "main", "cron")
-    os.execute("sed -i '/mysub-update/d' /etc/crontabs/root 2>/dev/null")
     if c and c ~= "" then
         -- shellquote() prevents cron (a free-text UCI value) from being
         -- interpreted as shell syntax, e.g. "0 4 * * *'; rm -rf / #"
-        local safe_line = luci.util.shellquote(c .. " /usr/libexec/mysub-update.sh")
-        os.execute("echo " .. safe_line .. " >> /etc/crontabs/root")
+        lines[#lines + 1] = luci.util.shellquote(c .. " /usr/libexec/mysub-update.sh")
+    end
+
+    -- Недельный анализ подписок: воскресенье (в cron это день 0),
+    -- время берём из «ЧЧ:ММ». Так шаблон серверов не устаревает сам.
+    if m.uci:get("mysub", "main", "analysis_cron_enabled") == "1" then
+        local t = m.uci:get("mysub", "main", "analysis_cron_time") or "03:30"
+        local hh, mm = t:match("^(%d%d?):(%d%d)$")
+        hh, mm = tonumber(hh) or 3, tonumber(mm) or 30
+        lines[#lines + 1] = luci.util.shellquote(string.format("%d %d * * 0 /usr/libexec/mysub-update.sh --analyze", mm, hh))
+    end
+
+    os.execute("sed -i '/mysub-update/d' /etc/crontabs/root 2>/dev/null")
+    for _, l in ipairs(lines) do
+        os.execute("echo " .. l .. " >> /etc/crontabs/root")
     end
     os.execute("/etc/init.d/cron restart")
 end
