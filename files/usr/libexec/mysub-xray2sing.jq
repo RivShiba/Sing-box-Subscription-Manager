@@ -8,8 +8,9 @@ def country_of($r):
   | ( if $stop == null then $words else $words[0:$stop] end ) as $cw
   | ( ($cw | join(" ")) as $s | if $s == "" then "other" else $s end );
 
-[
-  .[] | (.remarks // "") as $r | (country_of($r)) as $country
+(if type=="array" then . else [.] end) as $_in
+| [
+  $_in[] | (.remarks // "") as $r | (country_of($r)) as $country
   | (.outbounds // [])[]
   | select((.protocol // "") == "vless" or (.protocol // "") == "trojan")
   | (((.streamSettings // {}).network) // "tcp") as $net
