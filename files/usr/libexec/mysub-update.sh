@@ -26,6 +26,16 @@ fi
 echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' 0 1 2 15
 
+SCRIPT_T0=$(date +%s)
+# Человекочитаемая длительность: "45 с", "1 мин 12 с"
+fmt_dur() {
+    if [ "$1" -ge 60 ]; then
+        printf '%d мин %d с' $(($1 / 60)) $(($1 % 60))
+    else
+        printf '%d с' "$1"
+    fi
+}
+
 # Режим анализа подписок (--analyze): только замер/сортировка/шаблон,
 # основной конфиг и запущенный сервис при этом не затрагиваются.
 ANALYZE_MODE=0
@@ -270,8 +280,11 @@ probe_measure() {
 
 # Режим --analyze: замер, сортировка по возрастанию, запись шаблона.
 run_analysis() {
-    log "=== Режим анализа подписок ==="
+    _t0=$(date +%s)
+    log "=== Режим анализа подписок (начат в $(date '+%H:%M:%S')) ==="
     log "Порог задержки: ${max_delay_ms} ms; слова-исключения: ${exclude_keywords:-нет}"
+    uci -q set mysub.main.analysis_status="Выполняется: начат в $(date '+%d.%m.%Y %H:%M:%S'), порог ${max_delay_ms} ms"
+    uci -q commit mysub
 
     rm -rf "$ANALYZE_DIR"
     mkdir -p "$ANALYZE_DIR"
@@ -333,13 +346,15 @@ run_analysis() {
     fi
     log "Временный sing-box запущен (Clash API 127.0.0.1:$PROBE_PORT), идёт замер..."
 
-    : > "$ANALYZE_DIR/results.tsv"
+    # Каждый замер пишет свой файл: общий файл при параллельной записи терял
+    # строки (пропадали узлы), поэтому склеиваем результат после wait.
+    rm -f "$ANALYZE_DIR"/res_*.tsv
     _idx=0
     while IFS="$TAB" read -r _tag _server _port; do
         _idx=$((_idx + 1))
         (
             _d=$(probe_measure "$_tag")
-            printf '%s\t%s\t%s\t%s\n' "$_tag" "$_server" "$_port" "$_d" >> "$ANALYZE_DIR/results.tsv"
+            printf '%s\t%s\t%s\t%s\n' "$_tag" "$_server" "$_port" "$_d" > "$ANALYZE_DIR/res_${_idx}.tsv"
         ) &
         if [ $((_idx % PROBE_PARALLEL)) -eq 0 ]; then
             wait
@@ -347,6 +362,7 @@ run_analysis() {
     done < "$ANALYZE_DIR/candidates.tsv"
     wait
     probe_stop
+    cat "$ANALYZE_DIR"/res_*.tsv > "$ANALYZE_DIR/results.tsv" 2>/dev/null
 
     awk -F"$TAB" -v max="$max_delay_ms" 'NF >= 4 && $4 != "" && ($4 + 0) <= (max + 0) { print $4 "\t" $2 ":" $3 "\t" $1 }' \
         "$ANALYZE_DIR/results.tsv" | sort -n > "$ANALYZE_DIR/sorted.tsv"
@@ -360,14 +376,34 @@ run_analysis() {
         return 1
     fi
 
+    # Отсеянные показываем закомментированными строками: видно, кто и почему
+    # не попал, но в конфиг они не пройдут — парсер игнорирует всё после #.
+    awk -F"$TAB" -v max="$max_delay_ms" '
+        NF >= 4 && ($4 == "" || ($4 + 0) > (max + 0)) {
+            why = ($4 == "") ? "нет ответа" : ($4 "ms > порога " max "ms")
+            printf "%d\t%s:%s\t%s\t%s\n", ($4 == "" ? 999999 : $4 + 0), $2, $3, $1, why
+        }' "$ANALYZE_DIR/results.tsv" | sort -n > "$ANALYZE_DIR/rejected.tsv"
+    _rejected=$(wc -l < "$ANALYZE_DIR/rejected.tsv" | tr -d ' ')
+
     uci -q delete mysub.main.server_template
     while IFS="$TAB" read -r _d _key _tag; do
         uci -q add_list mysub.main.server_template="${_key}  # ${_tag} (${_d}ms)"
     done < "$ANALYZE_DIR/sorted.tsv"
+
+    if [ "$_rejected" -gt 0 ]; then
+        uci -q add_list mysub.main.server_template="# --- НИЖЕ ОТСЕЯНЫ, В КОНФИГ НЕ ПОПАДУТ (справочно) ---"
+        while IFS="$TAB" read -r _d _key _tag _why; do
+            uci -q add_list mysub.main.server_template="# ${_key}  # ${_tag} — отсеян: ${_why}"
+        done < "$ANALYZE_DIR/rejected.tsv"
+    fi
     uci -q commit mysub
 
-    log "SUCCESS: шаблон сохранён — $_fast сервер(ов), отсортированы по возрастанию задержки (см. поле «Шаблон серверов»)."
-    log "Чтобы обновления шли только по шаблону, включите галочку «Использовать шаблон анализа»."
+    _dur=$(( $(date +%s) - _t0 ))
+    log "SUCCESS: в конфиг пойдут $_fast сервер(ов); отсеяно $_rejected (см. поле «Шаблон серверов»)."
+    log "=== Анализ ВЫПОЛНЕН в $(date '+%H:%M:%S'), занял $(fmt_dur $_dur) ==="
+    log "Чтобы применить: включите галочку «Использовать шаблон анализа» и нажмите Run Update."
+    uci -q set mysub.main.analysis_status="Выполнен $(date '+%d.%m.%Y %H:%M:%S'), занял $(fmt_dur $_dur); в конфиг пойдут $_fast сервер(ов), отсеяно $_rejected (порог ${max_delay_ms} ms)"
+    uci -q commit mysub
     return 0
 }
 
@@ -850,4 +886,4 @@ else
 fi
 
 rm -f /tmp/mysub_outbounds.json
-log "=== Done ==="
+log "=== Done (заняло $(fmt_dur $(( $(date +%s) - SCRIPT_T0 )))) ==="
