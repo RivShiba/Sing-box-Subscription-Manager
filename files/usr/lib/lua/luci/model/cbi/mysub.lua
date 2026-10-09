@@ -22,6 +22,7 @@ s = m:section(NamedSection, "main", "mysub", "")
 
 -- Создаем вкладки (Tabs) для удобного интерфейса
 s:tab("general", translate("Настройки / Settings"))
+s:tab("analysis", translate("Анализ подписок / Subscription Analysis"))
 s:tab("logs", translate("Логи / Logs"))
 s:tab("config", translate("Готовый конфиг / Result Config"))
 
@@ -54,6 +55,56 @@ btn.description = translate("Запустить скачивание и парс
 btn.write = function(self, section)
     m.uci:commit("mysub")
     os.execute("/usr/libexec/mysub-update.sh > /dev/null 2>&1 &")
+end
+
+-- ================= Вкладка Analysis =================
+local use_tpl = s:taboption("analysis", Flag, "use_analysis_template",
+    translate("Использовать шаблон анализа"),
+    translate("Если включено, парсер добавляет в конфиг только серверы из шаблона и в том порядке, в котором они записаны в шаблоне. Если выключено — добавляются все найденные серверы, как раньше."))
+use_tpl.default = "0"
+use_tpl.enabled = "1"
+use_tpl.disabled = "0"
+
+local max_delay = s:taboption("analysis", Value, "max_delay_ms",
+    translate("Максимальная задержка (мс)"),
+    translate("Замеряется реальным подключением через sing-box (не ICMP), поэтому файрволы хостеров не мешают. Серверы медленнее этого значения в шаблон не попадут. Для Reality-серверов рекомендуется 1500–2500: реальная задержка заметно шумнее, чем ICMP."))
+max_delay.default = "500"
+max_delay.datatype = "uinteger"
+
+local excl = s:taboption("analysis", DynamicList, "exclude_keywords",
+    translate("Слова-исключения"),
+    translate("Сервер, в названии (теге) которого встречается любое из этих слов, не попадёт в шаблон. Регистр учитывается только для русских слов (ограничение BusyBox), для латиницы — не учитывается."))
+
+local btn_an = s:taboption("analysis", Button, "_analyze", translate("Анализ подписок"))
+btn_an.inputtitle = translate("Сделать анализ подписок")
+btn_an.inputstyle = "apply"
+btn_an.description = translate("Скачать подписки, отбросить серверы по словам-исключениям, замерить реальную задержку каждого сервера и отсортировать по возрастанию. Результат пишется в поле «Шаблон серверов». Текущий конфиг и запущенный сервис не затрагиваются. Занимает до 1–2 минут — после завершения обновите страницу (F5).")
+btn_an.write = function(self, section)
+    m.uci:commit("mysub")
+    os.execute("/usr/libexec/mysub-update.sh --analyze > /dev/null 2>&1 &")
+end
+
+local tpl = s:taboption("analysis", TextValue, "server_template",
+    translate("Шаблон серверов"),
+    translate("Список серверов в формате адрес:порт, по одному в строке. Генерируется кнопкой анализа, но можно править вручную; всё после символа # считается комментарием. Работает, только если включена галочка выше. Привязка идёт к адресу и порту (а не к названию), поэтому шаблон не ломается при изменении состава подписки."))
+tpl.rows = 15
+tpl.wrap = "off"
+tpl.rmempty = false
+tpl.cfgvalue = function(self, section)
+    local v = m.uci:get_list("mysub", section, "server_template") or {}
+    return table.concat(v, "\n")
+end
+tpl.write = function(self, section, value)
+    -- UCI не умеет хранить многострочный option, поэтому держим список (list).
+    -- В luci.model.uci доступен только set_list (метода add_list нет).
+    local vals = {}
+    for line in tostring(value or ""):gmatch("[^\r\n]+") do
+        local s_line = line:gsub("^%s+", ""):gsub("%s+$", "")
+        if s_line ~= "" then
+            vals[#vals + 1] = s_line
+        end
+    end
+    m.uci:set_list("mysub", section, "server_template", vals)
 end
 
 -- ================= Вкладка Logs =================
@@ -91,6 +142,9 @@ log = s:taboption("logs", TextValue, "_log", translate("Parser Log"), translate(
         }, 2000);
     </script>]])
 log.readonly = true
+-- readonly-поля не должны попадать в UCI: иначе лог (и полный JSON конфига)
+-- копится в /etc/config/mysub и изнашивает флеш-память роутера.
+log.write = function(self, section) end
 log.rows = 20
 log.cfgvalue = function(self, section)
     return nixio.fs.readfile("/var/log/mysub.log") or "Логи пусты. Нажмите 'Run Update', чтобы запустить парсер."
@@ -99,6 +153,7 @@ end
 -- ================= Вкладка Config =================
 config_view = s:taboption("config", TextValue, "_config_view", translate("Generated Config (JSON)"), translate("Финальный результат после слияния базового конфига и скачанных серверов."))
 config_view.readonly = true
+config_view.write = function(self, section) end
 config_view.rows = 30
 config_view.cfgvalue = function(self, section)
     local out_path = m.uci:get("mysub", "main", "output_config") or "/etc/mysub/mysub.json"
