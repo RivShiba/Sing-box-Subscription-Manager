@@ -6,6 +6,15 @@ CONFIG_FILE="/etc/config/mysub"
 LOG_FILE="/var/log/mysub.log"
 XRAY_CONV="/usr/libexec/mysub-xray2sing.jq"
 
+# Режим анализа подписок (--analyze): только замер/сортировка/шаблон,
+# основной конфиг и запущенный сервис при этом не затрагиваются.
+ANALYZE_MODE=0
+[ "$1" = "--analyze" ] && ANALYZE_MODE=1
+ANALYZE_DIR="/tmp/mysub_analyze"
+PROBE_PORT=9199
+PROBE_TRIES=2
+PROBE_PARALLEL=8
+
 > "$LOG_FILE"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE"; }
 debug() { [ "$log_level" = "debug" ] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $1" >> "$LOG_FILE"; }
@@ -29,20 +38,30 @@ output_config=$(uci -q get mysub.@mysub[0].output_config || uci -q get mysub.mai
 [ -z "$base_config" ] && base_config="/etc/mysub/template.json"
 [ -z "$output_config" ] && output_config="/etc/mysub/mysub.json"
 
+# --- Параметры анализа подписок (вкладка «Анализ подписок») ---
+use_template=$(uci -q get mysub.@mysub[0].use_analysis_template || uci -q get mysub.main.use_analysis_template)
+[ -z "$use_template" ] && use_template=0
+max_delay_ms=$(uci -q get mysub.@mysub[0].max_delay_ms || uci -q get mysub.main.max_delay_ms)
+[ -z "$max_delay_ms" ] && max_delay_ms=500
+exclude_keywords=$(uci -q get mysub.@mysub[0].exclude_keywords || uci -q get mysub.main.exclude_keywords)
+
 log "Base config: $base_config"
 log "Output config: $output_config"
 
-if [ ! -f "$base_config" ]; then
-    log "ERROR: Base config (template) not found!"
-    exit 1
-fi
+# В режиме анализа базовый конфиг не нужен: основной конфиг не изменяется.
+if [ "$ANALYZE_MODE" = "0" ]; then
+    if [ ! -f "$base_config" ]; then
+        log "ERROR: Base config (template) not found!"
+        exit 1
+    fi
 
-# Validate base config JSON
-if ! jq empty < "$base_config" >/dev/null 2>/tmp/jq_base_err.log; then
-    log "ERROR: Base config $base_config contains invalid JSON!"
-    err_msg=$(cat /tmp/jq_base_err.log | tr '\n' ' ')
-    log "JQ ERROR: $err_msg"
-    exit 1
+    # Validate base config JSON
+    if ! jq empty < "$base_config" >/dev/null 2>/tmp/jq_base_err.log; then
+        log "ERROR: Base config $base_config contains invalid JSON!"
+        err_msg=$(cat /tmp/jq_base_err.log | tr '\n' ' ')
+        log "JQ ERROR: $err_msg"
+        exit 1
+    fi
 fi
 
 if [ -z "$urls" ]; then
@@ -89,6 +108,286 @@ decode_base64() {
     [ $rem -eq 2 ] && str="${str}=="
     [ $rem -eq 3 ] && str="${str}="
     echo "$str" | base64 -d 2>/dev/null
+}
+
+# ================= Анализ подписок и шаблон серверов =================
+# Задержка измеряется реальным подключением через отдельный временный
+# экземпляр sing-box (Clash API), а не ICMP/TCP: ICMP режется файрволами
+# хостеров, а любой TCP-connect изнутри роутера перехватывается tproxy momo.
+# Рабочий сервис при замере не затрагивается — это другой процесс.
+
+TAB="$(printf '\t')"
+
+template_enabled() {
+    case "$use_template" in
+        1|true|on|yes|enabled) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# server_template хранится в UCI как list (многострочный option UCI не принимает).
+read_template_lines() {
+    uci -q show mysub 2>/dev/null \
+        | sed -n 's/^mysub\.main\.server_template=//p' \
+        | sed "s/' '/\n/g" \
+        | sed "s/^'//; s/'$//"
+}
+
+# Только ключи "адрес:порт": всё после # считается комментарием.
+read_template_keys() {
+    read_template_lines | while IFS= read -r _line; do
+        _key=$(printf '%s' "$_line" | sed 's/#.*//' | tr -d ' \t\r')
+        [ -n "$_key" ] && printf '%s\n' "$_key"
+    done
+}
+
+# Запуск временного sing-box только с узлами-кандидатами (Clash API на localhost).
+probe_start() {
+    _sb=$(command -v sing-box)
+    if [ -z "$_sb" ]; then
+        log "ERROR: sing-box не найден, замер задержки невозможен."
+        return 1
+    fi
+
+    _port=$PROBE_PORT
+    _tries=0
+    while netstat -ltn 2>/dev/null | grep -q ":$_port "; do
+        _port=$((_port + 10))
+        _tries=$((_tries + 1))
+        if [ "$_tries" -gt 5 ]; then
+            log "ERROR: не нашёл свободный порт для Clash API."
+            return 1
+        fi
+    done
+    PROBE_PORT=$_port
+
+    jq -n --slurpfile obs "$ANALYZE_DIR/candidates.json" --arg port "$PROBE_PORT" '{
+        log: { level: "error", output: "/tmp/mysub_analyze/probe.log" },
+        dns: { servers: [ { type: "udp", tag: "probe-dns", server: "1.1.1.1" } ], final: "probe-dns" },
+        route: { default_domain_resolver: "probe-dns" },
+        experimental: { clash_api: { external_controller: ("127.0.0.1:" + $port) } },
+        outbounds: $obs[0]
+    }' > "$ANALYZE_DIR/probe.json" 2>"$ANALYZE_DIR/jq_probe.err"
+
+    if [ ! -s "$ANALYZE_DIR/probe.json" ]; then
+        log "ERROR: не удалось собрать тестовый конфиг: $(tr '\n' ' ' < "$ANALYZE_DIR/jq_probe.err" | cut -c1-200)"
+        return 1
+    fi
+
+    # Процесс должен читать/писать в свой каталог, а запускается он от nobody.
+    chmod 777 "$ANALYZE_DIR" 2>/dev/null
+
+    # uid nobody исключён из tproxy-правил momo -> замер идёт напрямую,
+    # а не сквозь текущий туннель.
+    if [ -x /sbin/start-stop-daemon ]; then
+        start-stop-daemon -S -b -c nobody -p "$ANALYZE_DIR/probe.pid" -x "$_sb" -- \
+            -D "$ANALYZE_DIR" run -c "$ANALYZE_DIR/probe.json" 2>"$ANALYZE_DIR/probe.err"
+    else
+        ( "$_sb" -D "$ANALYZE_DIR" run -c "$ANALYZE_DIR/probe.json" > "$ANALYZE_DIR/probe.err" 2>&1 &
+          echo $! > "$ANALYZE_DIR/probe.pid" )
+        log "WARN: start-stop-daemon не найден — замер может идти через текущий туннель."
+    fi
+
+    sleep 4
+    _pid=$(cat "$ANALYZE_DIR/probe.pid" 2>/dev/null)
+    [ -z "$_pid" ] && _pid=$(pgrep -f "D $ANALYZE_DIR" 2>/dev/null | head -1)
+
+    # Гарантированный обход перехвата: тот же cgroup, что у самого momo.
+    if [ -n "$_pid" ] && [ -d /sys/fs/cgroup/services/momo ]; then
+        echo "$_pid" > /sys/fs/cgroup/services/momo/cgroup.procs 2>/dev/null \
+            && debug "Процесс замера помещён в cgroup momo (обход tproxy)."
+    fi
+
+    _wait=0
+    while [ "$_wait" -lt 10 ]; do
+        if curl -s --max-time 2 "http://127.0.0.1:$PROBE_PORT/version" 2>/dev/null | grep -q '"version"'; then
+            return 0
+        fi
+        sleep 1
+        _wait=$((_wait + 1))
+    done
+
+    log "ERROR: временный sing-box не поднял Clash API на 127.0.0.1:$PROBE_PORT."
+    [ -s "$ANALYZE_DIR/probe.log" ] && log "ERROR: $(tr '\n' ' ' < "$ANALYZE_DIR/probe.log" | cut -c1-300)"
+    [ -s "$ANALYZE_DIR/probe.err" ] && log "ERROR: $(tr '\n' ' ' < "$ANALYZE_DIR/probe.err" | cut -c1-300)"
+    return 1
+}
+
+probe_stop() {
+    _pid=$(cat "$ANALYZE_DIR/probe.pid" 2>/dev/null)
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+        kill "$_pid" 2>/dev/null
+    fi
+    # Подстраховка: только процессы с нашим каталогом в -D (momo не задеваем).
+    for _p in $(pgrep -f "D $ANALYZE_DIR" 2>/dev/null); do
+        kill "$_p" 2>/dev/null
+    done
+    sleep 1
+    # В probe.json лежат параметры узлов (id/пароли) — на диске его не оставляем.
+    rm -f "$ANALYZE_DIR/probe.json" "$ANALYZE_DIR/probe.pid"
+    chmod 700 "$ANALYZE_DIR" 2>/dev/null
+}
+
+# Замер одного узла: лучший результат из PROBE_TRIES попыток, иначе пусто.
+probe_measure() {
+    _enc=$(jq -rn --arg x "$1" '$x|@uri' 2>/dev/null)
+    _best=""
+    _n=0
+    while [ "$_n" -lt "$PROBE_TRIES" ]; do
+        _n=$((_n + 1))
+        _res=$(curl -s --max-time $(( max_delay_ms / 1000 + 2 )) \
+            "http://127.0.0.1:$PROBE_PORT/proxies/$_enc/delay?timeout=$max_delay_ms&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204" 2>/dev/null)
+        _d=$(printf '%s' "$_res" | jq -r '.delay // empty' 2>/dev/null)
+        if [ -n "$_d" ]; then
+            if [ -z "$_best" ] || [ "$_d" -lt "$_best" ]; then
+                _best="$_d"
+            fi
+            [ "$_best" -le "$max_delay_ms" ] && break
+        fi
+    done
+    [ -n "$_best" ] && printf '%s' "$_best"
+}
+
+# Режим --analyze: замер, сортировка по возрастанию, запись шаблона.
+run_analysis() {
+    log "=== Режим анализа подписок ==="
+    log "Порог задержки: ${max_delay_ms} ms; слова-исключения: ${exclude_keywords:-нет}"
+
+    rm -rf "$ANALYZE_DIR"
+    mkdir -p "$ANALYZE_DIR"
+
+    jq -r '.[] | select((.tag|type) == "string") | [.tag, (.server // ""), ((.server_port // 0)|tostring)] | @tsv' \
+        /tmp/mysub_outbounds.json > "$ANALYZE_DIR/nodes.tsv" 2>/dev/null
+
+    _total=$(wc -l < "$ANALYZE_DIR/nodes.tsv" | tr -d ' ')
+    log "Узлов из подписок: $_total"
+
+    : > "$ANALYZE_DIR/candidates.tsv"
+    _ok=0
+    _excluded=0
+    _skipped=0
+    while IFS="$TAB" read -r _tag _server _port; do
+        [ -n "$_tag" ] || continue
+        if [ -z "$_server" ] || [ "$_server" = "null" ] || [ "$_port" = "0" ]; then
+            _skipped=$((_skipped + 1))   # группы/служебные узлы без адреса
+            continue
+        fi
+        _hit=""
+        if [ -n "$exclude_keywords" ]; then
+            for _kw in $exclude_keywords; do
+                case "$_tag" in
+                    *"$_kw"*) _hit="$_kw"; break ;;
+                esac
+            done
+        fi
+        if [ -n "$_hit" ]; then
+            _excluded=$((_excluded + 1))
+            debug "Исключён по слову '$_hit': $_tag"
+            continue
+        fi
+        printf '%s\t%s\t%s\n' "$_tag" "$_server" "$_port" >> "$ANALYZE_DIR/candidates.tsv"
+        _ok=$((_ok + 1))
+    done < "$ANALYZE_DIR/nodes.tsv"
+
+    log "Кандидатов: $_ok (исключено по словам: $_excluded, без адреса: $_skipped)"
+
+    if [ "$_ok" -eq 0 ]; then
+        log "ERROR: после фильтрации не осталось узлов. Шаблон не изменён."
+        return 1
+    fi
+
+    awk -F"$TAB" '{print $1}' "$ANALYZE_DIR/candidates.tsv" > "$ANALYZE_DIR/candidate_tags.txt"
+    jq --rawfile t "$ANALYZE_DIR/candidate_tags.txt" \
+        '[ .[] | select(.tag as $x | ($t | split("\n") | index($x)) != null) ]' \
+        /tmp/mysub_outbounds.json > "$ANALYZE_DIR/candidates.json" 2>"$ANALYZE_DIR/jq_cand.err"
+
+    if [ ! -s "$ANALYZE_DIR/candidates.json" ]; then
+        log "ERROR: не удалось подготовить узлы для замера: $(tr '\n' ' ' < "$ANALYZE_DIR/jq_cand.err" | cut -c1-200)"
+        return 1
+    fi
+
+    if ! probe_start; then
+        probe_stop
+        log "ERROR: замер невозможен. Шаблон не изменён."
+        return 1
+    fi
+    log "Временный sing-box запущен (Clash API 127.0.0.1:$PROBE_PORT), идёт замер..."
+
+    : > "$ANALYZE_DIR/results.tsv"
+    _idx=0
+    while IFS="$TAB" read -r _tag _server _port; do
+        _idx=$((_idx + 1))
+        (
+            _d=$(probe_measure "$_tag")
+            printf '%s\t%s\t%s\t%s\n' "$_tag" "$_server" "$_port" "$_d" >> "$ANALYZE_DIR/results.tsv"
+        ) &
+        if [ $((_idx % PROBE_PARALLEL)) -eq 0 ]; then
+            wait
+        fi
+    done < "$ANALYZE_DIR/candidates.tsv"
+    wait
+    probe_stop
+
+    awk -F"$TAB" -v max="$max_delay_ms" 'NF >= 4 && $4 != "" && ($4 + 0) <= (max + 0) { print $4 "\t" $2 ":" $3 "\t" $1 }' \
+        "$ANALYZE_DIR/results.tsv" | sort -n > "$ANALYZE_DIR/sorted.tsv"
+
+    _measured=$(wc -l < "$ANALYZE_DIR/results.tsv" | tr -d ' ')
+    _fast=$(wc -l < "$ANALYZE_DIR/sorted.tsv" | tr -d ' ')
+    log "Замерены: $_measured; прошли порог ${max_delay_ms} ms: $_fast"
+
+    if [ "$_fast" -eq 0 ]; then
+        log "ERROR: ни один сервер не прошёл замер. Шаблон не изменён (оставлен прежний)."
+        return 1
+    fi
+
+    uci -q delete mysub.main.server_template
+    while IFS="$TAB" read -r _d _key _tag; do
+        uci -q add_list mysub.main.server_template="${_key}  # ${_tag} (${_d}ms)"
+    done < "$ANALYZE_DIR/sorted.tsv"
+    uci -q commit mysub
+
+    log "SUCCESS: шаблон сохранён — $_fast сервер(ов), отсортированы по возрастанию задержки (см. поле «Шаблон серверов»)."
+    log "Чтобы обновления шли только по шаблону, включите галочку «Использовать шаблон анализа»."
+    return 0
+}
+
+# Обычный режим: оставить только серверы из шаблона и в порядке шаблона.
+apply_server_template() {
+    mkdir -p "$ANALYZE_DIR"
+    read_template_keys > "$ANALYZE_DIR/tpl_keys.txt"
+    _kcount=$(grep -c . "$ANALYZE_DIR/tpl_keys.txt" 2>/dev/null | tr -d ' ')
+    [ -z "$_kcount" ] && _kcount=0
+
+    if [ "$_kcount" -eq 0 ]; then
+        log "ERROR: включён шаблон анализа, но шаблон пуст. Обновление отменено, конфиг не изменён."
+        return 1
+    fi
+
+    # -n обязателен: данные приходят через --slurpfile/--rawfile, а stdin у
+    # скрипта может быть чем угодно (cron, heredoc, LuCI).
+    if ! jq -n --slurpfile o /tmp/mysub_outbounds.json --rawfile k "$ANALYZE_DIR/tpl_keys.txt" '
+        ($k | split("\n") | map(select(length > 0))) as $keys
+        | [ $keys[] as $key
+            | $o[0][] | select( ((.server // "") + ":" + ((.server_port // 0)|tostring)) == $key ) ]
+    ' > "$ANALYZE_DIR/filtered.json" 2>"$ANALYZE_DIR/jq_filter.err"; then
+        log "ERROR: фильтр шаблона упал: $(tr '\n' ' ' < "$ANALYZE_DIR/jq_filter.err" | cut -c1-300)"
+        return 1
+    fi
+
+    _fcount=$(jq 'length' "$ANALYZE_DIR/filtered.json" 2>/dev/null)
+    [ -z "$_fcount" ] && _fcount=0
+
+    if [ "$_fcount" -eq 0 ]; then
+        log "ERROR: ни один сервер из шаблона ($_kcount ключей) не найден в подписке. Обновление отменено, конфиг не изменён."
+        return 1
+    fi
+
+    cp "$ANALYZE_DIR/filtered.json" /tmp/mysub_outbounds.json
+    jq 'reduce (.[] | .tag) as $t ([]; if index($t) then . else . + [$t] end)' \
+        "$ANALYZE_DIR/filtered.json" > /tmp/mysub_subst.json
+
+    log "Шаблон применён: $_fcount сервер(ов) из $_kcount ключей (порядок — как в шаблоне)."
+    return 0
 }
 
 for url in $urls; do
@@ -230,6 +529,7 @@ for url in $urls; do
                 type=$(echo "$query" | awk -F'type=' '{print $2}' | cut -d'&' -f1)
                 security=$(echo "$query" | awk -F'security=' '{print $2}' | cut -d'&' -f1)
                 sni=$(echo "$query" | awk -F'sni=' '{print $2}' | cut -d'&' -f1)
+                sni=$(urldecode "$sni")
                 path=$(echo "$query" | awk -F'path=' '{print $2}' | cut -d'&' -f1)
                 path=$(urldecode "$path")
                 host=$(echo "$query" | awk -F'host=' '{print $2}' | cut -d'&' -f1)
@@ -269,7 +569,7 @@ for url in $urls; do
                 v_id=$(echo "$vmess_json" | jq -r '.id // empty')
                 v_net=$(echo "$vmess_json" | jq -r '.net // "tcp"')
                 v_tls=$(echo "$vmess_json" | jq -r '.tls // "none"')
-                v_sni=$(echo "$vmess_json" | jq -r '.sni // empty')
+                v_sni=$(urldecode "$(echo "$vmess_json" | jq -r '.sni // empty')")
                 v_path=$(echo "$vmess_json" | jq -r '.path // empty')
                 v_ps=$(echo "$vmess_json" | jq -r '.ps // empty')
                 v_host=$(echo "$vmess_json" | jq -r '.host // empty')
@@ -345,6 +645,7 @@ for url in $urls; do
                 type=$(echo "$query" | awk -F'type=' '{print $2}' | cut -d'&' -f1)
                 security=$(echo "$query" | awk -F'security=' '{print $2}' | cut -d'&' -f1)
                 sni=$(echo "$query" | awk -F'sni=' '{print $2}' | cut -d'&' -f1)
+                sni=$(urldecode "$sni")
                 path=$(echo "$query" | awk -F'path=' '{print $2}' | cut -d'&' -f1)
                 path=$(urldecode "$path")
                 host=$(echo "$query" | awk -F'host=' '{print $2}' | cut -d'&' -f1)
@@ -414,6 +715,7 @@ for url in $urls; do
                 server=$(echo "$server" | sed 's/^\[//; s/\]$//')
 
                 sni=$(echo "$query" | awk -F'sni=' '{print $2}' | cut -d'&' -f1)
+                sni=$(urldecode "$sni")
                 obfs=$(echo "$query" | awk -F'obfs=' '{print $2}' | cut -d'&' -f1)
                 obfs_password=$(echo "$query" | awk -F'obfs-password=' '{print $2}' | cut -d'&' -f1)
                 obfs_password=$(urldecode "$obfs_password")
@@ -461,6 +763,29 @@ done
 
 echo "]" >> /tmp/mysub_outbounds.json
 log "Total servers parsed: $total_parsed. Total skipped: $total_skipped."
+
+# --- Режим анализа: замер, сортировка и запись шаблона. Конфиг не трогаем. ---
+if [ "$ANALYZE_MODE" = "1" ]; then
+    if run_analysis; then
+        log "=== Анализ завершён (основной конфиг не изменялся) ==="
+        rm -f /tmp/mysub_outbounds.json
+        exit 0
+    fi
+    log "=== Анализ завершён с ошибкой ==="
+    rm -f /tmp/mysub_outbounds.json
+    exit 1
+fi
+
+# --- Шаблон анализа включён: оставляем только серверы из шаблона ---
+if template_enabled; then
+    if ! apply_server_template; then
+        log "Обновление прервано: конфиг оставлен без изменений, старые серверы продолжают работать."
+        rm -f /tmp/mysub_outbounds.json
+        exit 1
+    fi
+else
+    debug "Шаблон анализа выключен — используются все найденные серверы."
+fi
 
 if [ "$total_parsed" -gt 0 ]; then
     log "Merging with base config ($base_config) using marker method..."
