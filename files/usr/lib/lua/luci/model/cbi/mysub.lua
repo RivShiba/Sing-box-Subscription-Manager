@@ -27,23 +27,23 @@ s:tab("logs", translate("Логи / Logs"))
 s:tab("config", translate("Готовый конфиг / Result Config"))
 
 -- ================= Вкладка General =================
-local ver = s:taboption("general", Value, "_version", translate("Installed Version"), translate("Текущая установленная версия пакета."))
+local ver = s:taboption("general", Value, "_version", translate("Installed Version"), translate("Версия пакета."))
 ver.default = installed_version()
 ver.rmempty = true
 ver.readonly = true
 
 urls = s:taboption("general", DynamicList, "urls", translate("Subscription URLs"), translate("Ссылки на подписки (v2rayN, Base64)."))
 
-base = s:taboption("general", Value, "base_config", translate("Base Config File"), translate("Путь к базовому конфигу (в него добавятся прокси)."))
+base = s:taboption("general", Value, "base_config", translate("Base Config File"), translate("Базовый конфиг, в него добавляются прокси."))
 base.default = "/etc/mysub/template.json"
 
-out = s:taboption("general", Value, "output_config", translate("Output Config File"), translate("Куда сохранить результат (Base + Подписки)."))
+out = s:taboption("general", Value, "output_config", translate("Output Config File"), translate("Файл результата: база + подписки."))
 out.default = "/etc/mysub/mysub.json"
 
-cron = s:taboption("general", Value, "cron", translate("Cron Interval"), translate("Стандартный формат cron, например '0 4 * * *'."))
+cron = s:taboption("general", Value, "cron", translate("Cron Interval"), translate("Расписание обновления, например '0 4 * * *'."))
 cron.default = "0 4 * * *"
 
-log_level = s:taboption("general", ListValue, "log_level", translate("Log Level"), translate("Уровень детализации логов."))
+log_level = s:taboption("general", ListValue, "log_level", translate("Log Level"), translate("Детализация логов."))
 log_level:value("info", "Info")
 log_level:value("debug", "Debug")
 log_level.default = "info"
@@ -51,7 +51,7 @@ log_level.default = "info"
 btn = s:taboption("general", Button, "_update", translate("Update Now"))
 btn.inputtitle = translate("Run Update")
 btn.inputstyle = "action"
-btn.description = translate("Запустить скачивание и парсинг подписок прямо сейчас.")
+btn.description = translate("Скачать подписки и собрать конфиг сейчас.")
 btn.write = function(self, section)
     m.uci:commit("mysub")
     os.execute("/usr/libexec/mysub-update.sh > /dev/null 2>&1 &")
@@ -60,26 +60,26 @@ end
 -- ================= Вкладка Analysis =================
 local use_tpl = s:taboption("analysis", Flag, "use_analysis_template",
     translate("Использовать шаблон анализа"),
-    translate("Если включено, парсер добавляет в конфиг только серверы из шаблона и в том порядке, в котором они записаны в шаблоне. Если выключено — добавляются все найденные серверы, как раньше."))
+    translate("В конфиг попадут только серверы из шаблона и в его порядке."))
 use_tpl.default = "0"
 use_tpl.enabled = "1"
 use_tpl.disabled = "0"
 
 local max_delay = s:taboption("analysis", Value, "max_delay_ms",
     translate("Максимальная задержка (мс)"),
-    translate("Замеряется реальным подключением через sing-box (не ICMP), поэтому файрволы хостеров не мешают. Серверы медленнее этого значения в шаблон не попадут. Для Reality-серверов рекомендуется 1500–2500: реальная задержка заметно шумнее, чем ICMP."))
+    translate("Медленнее этого значения сервер в шаблон не попадёт. Для Reality разумно 1500–2500."))
 max_delay.default = "500"
 max_delay.datatype = "uinteger"
 
 local excl = s:taboption("analysis", DynamicList, "exclude_keywords",
     translate("Слова-исключения"),
-    translate("Сервер, в названии (теге) которого встречается любое из этих слов, не попадёт в шаблон. Регистр учитывается только для русских слов (ограничение BusyBox), для латиницы — не учитывается."))
+    translate("Слово в названии сервера — он не попадёт в шаблон."))
 
 -- Автоанализ подписок — обычное cron-выражение, как у обновления выше:
 -- день и время пользователь выбирает сам. Пустое поле = задание не ставится.
 local an_cron = s:taboption("analysis", Value, "analysis_cron",
     translate("Автоанализ подписок (cron)"),
-    translate("Расписание автоанализа в обычном cron-формате из пяти полей: минуты, часы, день месяца, месяц, день недели. Например '30 3 * * 0' — каждое воскресенье в 03:30, '15 5 * * 1,4' — по понедельникам и четвергам в 05:15. День недели: 0 или 7 — воскресенье, 1 — понедельник, ..., 6 — суббота. Пишите только расписание — команду пакет добавит сам. Пустое поле выключает автоанализ. Разумно ставить анализ раньше обычного обновления (по умолчанию '0 4 * * *'), тогда свежий шаблон применится в тот же день. Задание пересобирается при сохранении настроек, поэтому правьте расписание здесь, а не вручную в crontab."))
+    translate("Расписание автоанализа, например '30 3 * * 0' — по воскресеньям в 03:30 (день недели: 0 или 7 — воскресенье). Пусто — выключено. Только расписание, команду пакет добавит сам."))
 an_cron.default = ""
 an_cron.rmempty = true
 an_cron.write = function(self, section, value)
@@ -93,7 +93,7 @@ end
 
 local st = s:taboption("analysis", TextValue, "analysis_status",
     translate("Результат последнего анализа"),
-    translate("Время завершения, длительность и итог последнего анализа. Заполняется кнопкой ниже; чтобы увидеть свежий результат, обновите страницу (F5)."))
+    translate("Итог последнего анализа; свежий виден после обновления страницы (F5)."))
 st.readonly = true
 -- readonly-поле не должно попадать в UCI при сохранении формы
 st.write = function(self, section) end
@@ -105,7 +105,7 @@ end
 local btn_an = s:taboption("analysis", Button, "_analyze", translate("Анализ подписок"))
 btn_an.inputtitle = translate("Сделать анализ подписок")
 btn_an.inputstyle = "apply"
-btn_an.description = translate("Скачать подписки, отбросить серверы по словам-исключениям, замерить реальную задержку каждого сервера и отсортировать по возрастанию. Результат пишется в поле «Шаблон серверов». Текущий конфиг и запущенный сервис не затрагиваются. Занимает ~30–60 секунд и выполняется в фоне, LuCI при этом не блокируется: после завершения обновите страницу (F5) — время и итог появятся в поле «Результат последнего анализа». ВАЖНО: сам анализ конфиг не меняет, чтобы серверы попали в конфиг, после анализа нажмите «Run Update» (или дождитесь cron).")
+btn_an.description = translate("Замерить задержки и обновить шаблон серверов. Идёт в фоне ~30–60 с, конфиг не меняет: серверы применятся при обновлении. Итог — после F5.")
 btn_an.write = function(self, section)
     m.uci:commit("mysub")
     os.execute("/usr/libexec/mysub-update.sh --analyze > /dev/null 2>&1 &")
@@ -113,7 +113,7 @@ end
 
 local tpl = s:taboption("analysis", TextValue, "server_template",
     translate("Шаблон серверов"),
-    translate("Список серверов в формате адрес:порт, по одному в строке. Генерируется кнопкой анализа, но можно править вручную. В конфиг попадут только строки БЕЗ решётки в начале — именно они и есть список активных серверов; строки, начинающиеся с #, игнорируются, в них анализ показывает отсеянные серверы с причиной (для справки, их можно удалить). Первая строка (# rev ...) — служебная метка версии. Если вы правите шаблон вручную, сначала обновите страницу (F5): после каждого анализа шаблон получает новую версию, и правки, сделанные на устаревшей странице, не сохраняются (защита от затирания свежего результата анализа). Работает, только если включена галочка выше. Привязка идёт к адресу и порту (а не к названию), поэтому шаблон не ломается при изменении состава подписки."))
+    translate("Адрес:порт, по одному в строке. Строки с # игнорируются. Перед ручной правкой обновите страницу (F5), иначе правки не сохранятся. Работает при включённой галочке выше."))
 tpl.rows = 22
 tpl.wrap = "off"
 tpl.rmempty = false
@@ -152,7 +152,7 @@ end
 
 -- ================= Вкладка Logs =================
 local get_log_url = luci.dispatcher.build_url("admin", "services", "mysub", "get_log")
-log = s:taboption("logs", TextValue, "_log", translate("Parser Log"), translate("История выполнения скрипта. Логи обновляются автоматически каждые 2 секунды.") .. 
+log = s:taboption("logs", TextValue, "_log", translate("Parser Log"), translate("История выполнения, обновляется каждые 2 с.") .. 
     [[<br/><br/><button class="btn cbi-button cbi-button-apply" type="button" onclick="
         var ta = document.getElementById('cbid.mysub.main._log');
         if (ta) {
@@ -194,7 +194,7 @@ log.cfgvalue = function(self, section)
 end
 
 -- ================= Вкладка Config =================
-config_view = s:taboption("config", TextValue, "_config_view", translate("Generated Config (JSON)"), translate("Финальный результат после слияния базового конфига и скачанных серверов."))
+config_view = s:taboption("config", TextValue, "_config_view", translate("Generated Config (JSON)"), translate("Результат слияния базы и подписок."))
 config_view.readonly = true
 config_view.write = function(self, section) end
 config_view.rows = 30
@@ -204,9 +204,9 @@ config_view.cfgvalue = function(self, section)
 end
 
 -- Хук для обновления crontab при сохранении настроек.
--- Обе строки (обычное обновление и недельный анализ) собираются с нуля:
+-- Обе строки (обычное обновление и автоанализ) собираются с нуля:
 -- sed сносит всё, где есть «mysub-update», поэтому дублей не возникает,
--- а выключенная галочка автоанализа действительно убирает задание.
+-- а пустое поле автоанализа действительно убирает задание.
 function m.on_after_commit(self)
     local lines = {}
 
