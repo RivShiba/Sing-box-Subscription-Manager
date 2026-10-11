@@ -75,28 +75,20 @@ local excl = s:taboption("analysis", DynamicList, "exclude_keywords",
     translate("Слова-исключения"),
     translate("Сервер, в названии (теге) которого встречается любое из этих слов, не попадёт в шаблон. Регистр учитывается только для русских слов (ограничение BusyBox), для латиницы — не учитывается."))
 
--- Недельный автоанализ: держит шаблон свежим. Без него при смене адресов
--- узлов у провайдера шаблон перестаёт совпадать с подпиской, и обновление
--- начинает отменяться защитой (конфиг остаётся рабочим, но не свежим).
-local an_cron = s:taboption("analysis", Flag, "analysis_cron_enabled",
-    translate("Автоматический анализ по расписанию (воскресенье)"),
-    translate("Раз в неделю, по воскресеньям, в указанное ниже время запускать анализ подписок: парсер скачает подписки, замерит задержки и обновит «Шаблон серверов». Нужно, чтобы шаблон не устаревал. Сам анализ конфиг не меняет — серверы подтянутся при следующем обычном обновлении по cron. Выключение галочки полностью убирает задание."))
-an_cron.default = "0"
-an_cron.enabled = "1"
-an_cron.disabled = "0"
-
-local an_time = s:taboption("analysis", Value, "analysis_cron_time",
-    translate("Время недельного анализа (ЧЧ:ММ)"),
-    translate("Время запуска автоанализа в 24-часовом формате, например 03:30. Ставьте его раньше обычного обновления (по умолчанию 4:00) — тогда свежий шаблон успеет примениться в тот же день. При неверном формате подставляется 03:30."))
-an_time.default = "03:30"
-an_time.rmempty = true
-an_time.write = function(self, section, value)
-    local hh, mm = tostring(value or ""):match("^%s*(%d%d?):(%d%d)%s*$")
-    if hh and tonumber(hh) <= 23 and tonumber(mm) <= 59 then
-        m.uci:set("mysub", section, "analysis_cron_time", string.format("%02d:%02d", tonumber(hh), tonumber(mm)))
-    else
-        m.uci:set("mysub", section, "analysis_cron_time", "03:30")
-    end
+-- Автоанализ подписок — обычное cron-выражение, как у обновления выше:
+-- день и время пользователь выбирает сам. Пустое поле = задание не ставится.
+local an_cron = s:taboption("analysis", Value, "analysis_cron",
+    translate("Автоанализ подписок (cron)"),
+    translate("Расписание автоанализа в обычном cron-формате из пяти полей: минуты, часы, день месяца, месяц, день недели. Например '30 3 * * 0' — каждое воскресенье в 03:30, '15 5 * * 1,4' — по понедельникам и четвергам в 05:15. День недели: 0 или 7 — воскресенье, 1 — понедельник, ..., 6 — суббота. Пишите только расписание — команду пакет добавит сам. Пустое поле выключает автоанализ. Разумно ставить анализ раньше обычного обновления (по умолчанию '0 4 * * *'), тогда свежий шаблон применится в тот же день. Задание пересобирается при сохранении настроек, поэтому правьте расписание здесь, а не вручную в crontab."))
+an_cron.default = ""
+an_cron.rmempty = true
+an_cron.write = function(self, section, value)
+    -- Берём только расписание: если вписали строку вместе с командой,
+    -- хвост отбрасываем, иначе команда попала бы в crontab дважды.
+    local f, out = {}, {}
+    for w in tostring(value or ""):gmatch("%S+") do f[#f + 1] = w end
+    for i = 1, math.min(#f, 5) do out[i] = f[i] end
+    m.uci:set("mysub", section, "analysis_cron", table.concat(out, " "))
 end
 
 local st = s:taboption("analysis", TextValue, "analysis_status",
@@ -225,13 +217,11 @@ function m.on_after_commit(self)
         lines[#lines + 1] = luci.util.shellquote(c .. " /usr/libexec/mysub-update.sh")
     end
 
-    -- Недельный анализ подписок: воскресенье (в cron это день 0),
-    -- время берём из «ЧЧ:ММ». Так шаблон серверов не устаревает сам.
-    if m.uci:get("mysub", "main", "analysis_cron_enabled") == "1" then
-        local t = m.uci:get("mysub", "main", "analysis_cron_time") or "03:30"
-        local hh, mm = t:match("^(%d%d?):(%d%d)$")
-        hh, mm = tonumber(hh) or 3, tonumber(mm) or 30
-        lines[#lines + 1] = luci.util.shellquote(string.format("%d %d * * 0 /usr/libexec/mysub-update.sh --analyze", mm, hh))
+    -- Автоанализ подписок: обычное cron-выражение, заданное пользователем.
+    -- Пустое поле = задание не ставится (так автоанализ и выключается).
+    local ac = m.uci:get("mysub", "main", "analysis_cron")
+    if ac and ac:match("%S") then
+        lines[#lines + 1] = luci.util.shellquote(ac .. " /usr/libexec/mysub-update.sh --analyze")
     end
 
     os.execute("sed -i '/mysub-update/d' /etc/crontabs/root 2>/dev/null")
